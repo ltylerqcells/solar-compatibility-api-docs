@@ -94,7 +94,7 @@ curl -X POST https://solar-compatibility-api.onrender.com/v1/check/combined \
     "installation-date": "2026-06-15",
     "bom": {
       "pv": [{"sku": "Q.PEAK DUO BLK ML-G10+ 410"}],
-      "inverter": [{"sku": "USE7600H-USMNBL75"}]
+      "inverter": [{"sku": "Q.VOLT H3.8SX"}]
     },
     "other equipment": {
       "Rail": ["XR-10-168M-US"],
@@ -193,6 +193,17 @@ The `bom` object holds three required arrays — `pv`, `inverter`, `battery` —
 | `material_codes` | Optional | array of strings | `[]` | PV only. Ignored for inverter/battery. |
 | `quantity` | **Required on all battery items; required on PV items when batteries are present** | integer | `null` | Battery count for battery items (used in capacity-weighted DCA/FEOC averages). Module count for PV items (used for the 2024 IRS unified formula). |
 
+#### Blank string handling
+
+Blank strings (`""` or whitespace-only) in identifier arrays are silently filtered. So `serial_numbers: ["", "SN123", "  "]` is treated as `serial_numbers: ["SN123"]`.
+
+Blank strings as SKU values are rejected with explicit FAIL messages:
+- PV item with `sku: ""` → `FAIL: Module SKU is required`
+- Inverter item with `sku: ""` → `FAIL: Inverter SKU is required`
+- Battery item with `sku: ""` → `FAIL: Battery SKU cannot be blank or whitespace-only`
+
+This means a request that sends an empty string for a SKU (e.g., from a database row where the column is empty) gets a clear error rather than a cryptic "SKU '' not found in AVL" message.
+
 #### `pv` array constraints
 
 - **Must have at least one item.** Empty `pv` array → `FAIL: Module SKU is required`.
@@ -244,15 +255,21 @@ The `other equipment` object holds racking and accessory SKUs. Required buckets 
 | `Rail` | **Required** | array | At least one rail SKU. Multiple rails allowed up to a configured maximum. |
 | `Mid Clamp` | **Required** | array | At least one mid clamp SKU. |
 | `End Clamp` | **Required** | array | At least one end clamp SKU. |
-| `Roof Flashing/Mount/Clamp` | **One-of (with L-foot)** | array | At least one of this OR `L-foot / Standoff / Tilt-leg` is required. |
-| `L-foot / Standoff / Tilt-leg` | **One-of (with Roof Flashing)** | array | See above. |
+| `Roof Flashing/Mount/Clamp` | **Required** | array | All systems need mounts/flashings/roof-clamps to attach to the roof. |
+| `L-foot / Standoff / Tilt-leg` | Optional | array | Used for tilt or height adjustment. Not required (the roof attachment alone suffices). |
 | `Splice` | Optional | array | |
-| `MLPE Mount` | Optional | array | |
+| `MLPE Mount` | **Required only for MLPE systems** | array | Required when the inverter is a microinverter or has MLPE. Compatibility FAILs if missing. |
 | `Accessories` | Optional | array | |
-| `MLPE/Optimizer` | Optional | single string | Single SKU, not an array. |
+| `MLPE/Optimizer` | **Required for some MLPE systems** | single string | Required for Enphase MLPE inverters (and similar). Compatibility FAILs if missing. Single SKU, not an array. |
 | `Gateway` | Optional | single string | Single SKU, not an array. |
 
 ---
+
+#### Blank string handling
+
+Blank strings in racking arrays (Rail, Mid Clamp, etc.) are silently filtered. So `Rail: ["", "XR-10-168M-US", "  "]` becomes `Rail: ["XR-10-168M-US"]`.
+
+Blank strings as values for single-string fields (`MLPE/Optimizer`, `Gateway`) are treated as if the field is not provided.
 
 ## 5. Response Structure
 
@@ -261,7 +278,7 @@ The response is a single JSON object with five sections: top-level status, DCA r
 ```json
 {
   "valid": true,
-  "system_type": "MLPE",
+  "system_type": "String",
 
   "pass_dca_pv": true,
   "pass_dca_ess": true,
@@ -432,13 +449,13 @@ Module / inverter / battery requirements:
 - `FAIL: Inverter SKU is required`
 - `FAIL: Multiple inverter SKUs require manual review`
 - `FAIL: At most 3 batteries allowed, got <N>`
+- `FAIL: Battery SKU cannot be blank or whitespace-only`
 
 Racking / equipment requirements:
 
 - `FAIL: Multiple <bucket> SKUs not allowed (<sku1>, <sku2>, ...)` — for buckets that allow only one SKU
 - `FAIL: At most <N> distinct Rail SKUs allowed, got <N> (<skus>)`
 - `FAIL: Missing required product type: <key>`
-- `FAIL: Must include either Roof Flashing/Mount/Clamp or L-foot / Standoff / Tilt-leg (at least one required)`
 
 Identifier shape:
 
@@ -504,6 +521,7 @@ Module ↔ Inverter:
 Inverter ↔ MLPE/Optimizer:
 
 - `FAIL: MLPE/Optimizer is required for <inv_oem> MLPE inverters`
+  - The required inv_oem are Tesla and SolarEdge
 - `FAIL: MLPE Mount is required for MLPE/microinverter systems`
 - `FAIL: MLPE/Optimizer must be same OEM as Inverter`
 
@@ -578,14 +596,14 @@ Threshold misses (downgraded from FAIL to WARNING — install is processable, ju
 
 ## 8. Common Patterns and Examples
 
-### 8.1 Minimum viable request (no battery, 2026)
+### 8.1 Minimum viable request (no battery, String inverter requires no MLPE/Optimizer or MLPE Mount, 2026)
 
 ```json
 {
   "installation-date": "2026-08-15",
   "bom": {
     "pv": [{"sku": "Q.PEAK DUO BLK ML-G10+ 410"}],
-    "inverter": [{"sku": "USE7600H-USMNBL75"}]
+    "inverter": [{"sku": "Q.VOLT H3.8SX"}]
   },
   "other equipment": {
     "Rail": ["XR-10-168M-US"],
@@ -595,6 +613,7 @@ Threshold misses (downgraded from FAIL to WARNING — install is processable, ju
   }
 }
 ```
+A minimum viable requirement for an MLPE system will require an MLPE Mount in racking and will generally require an MLPE/Optimizer as well.
 
 ### 8.2 Full request with battery and identifiers (2026)
 
@@ -648,7 +667,7 @@ Threshold misses (downgraded from FAIL to WARNING — install is processable, ju
       }
     ],
     "inverter": [
-      {"sku": "USE5700H-USMNBE78"}
+      {"sku": "Q.VOLT H3.8SX"}
     ],
     "battery": [
       {"sku": "UBAT-10K1PS0B-03",
@@ -694,32 +713,32 @@ The pooled identifiers apply to ALL items in that category. Mix per-item and poo
 ```json
 {
   "valid": true,
-  "system_type": "MLPE",
   "pass_dca_pv": true,
-  "pass_dca_ess": true,
+  "pass_dca_ess": false,
   "pv_side_total_dca": 0.514,
-  "ess_side_total_dca": 0.595,
-  "unified_total_dca": null,
+  "ess_side_total_dca": 0.461,
   "dca_pv_threshold": 0.5,
   "dca_ess_threshold": 0.5,
+  "unified_total_dca": null,
   "pass_feoc_pv": true,
   "pass_feoc_ess": true,
-  "pv_side_total_feoc": 0.617,
-  "ess_side_total_feoc": 0.568,
+  "pv_side_total_feoc": 0.679,
+  "ess_side_total_feoc": 0.731,
   "feoc_pv_threshold": 0.4,
   "feoc_ess_threshold": 0.55,
+  "system_type": "MLPE",
   "components": [
     {
       "key": "Module",
-      "sku": "DCA.17 Q.PEAK DUO BLK ML-G10+ 410",
+      "sku": "Q.PEAK DUO BLK ML-G10.C+ 420",
       "skus": null,
-      "dca_pct": 0.039,
-      "feoc_pct": 0.311,
+      "dca_pct": 0.07,
+      "feoc_pct": 0.431,
       "notes": []
     },
     {
       "key": "Inverter",
-      "sku": "USE11400H-USSKBEZ8 (11400W)",
+      "sku": "USE5700H-USMNBE78",
       "skus": null,
       "dca_pct": 0.248,
       "feoc_pct": 0.248,
@@ -728,25 +747,45 @@ The pooled identifiers apply to ALL items in that category. Mix per-item and poo
     {
       "key": "Racking",
       "sku": null,
-      "skus": ["XR-10-168M-US", "XR-MID-01-B1-US", "UFO-END-01-B1-US"],
-      "dca_pct": 0.227,
+      "skus": [
+        "232-10095-USA",
+        "242-02071-USA",
+        "242-02073-USA",
+        "242-01213-USA",
+        "242-02729",
+        "242-02168",
+        "242-10034-USA",
+        "232-01106"
+      ],
+      "dca_pct": 0.196,
       "feoc_pct": null,
       "notes": [
-        "Rail (XR-10-168M-US): 18.70%",
-        "Mid Clamp (XR-MID-01-B1-US): 11.10%",
-        "End Clamp (UFO-END-01-B1-US): 11.10%"
+        "Rail (232-10095-USA): 15.00%",
+        "Mid Clamp (242-02071-USA): 3.50%",
+        "End Clamp (242-02073-USA): 3.50%",
+        "Splice (242-01213-USA): 3.50%",
+        "Roof Flashing/Mount/Clamp (242-02729): no DCA %",
+        "L-foot / Standoff / Tilt-leg (242-02168): no DCA %",
+        "MLPE Mount (242-10034-USA): 3.50%",
+        "Accessories (232-01106): no DCA %"
       ]
     },
     {
       "key": "ESS",
       "sku": null,
-      "skus": ["1707000-21-y"],
-      "dca_pct": 0.595,
-      "feoc_pct": 0.568,
-      "notes": ["BatteryA (1707000-21-y): qty=1, capacity=13.5 kWh"]
+      "skus": [
+        "UBAT-10K1PS0B-03"
+      ],
+      "dca_pct": 0.461,
+      "feoc_pct": 0.731,
+      "notes": [
+        "BatteryA (UBAT-10K1PS0B-03): qty=1, capacity=9.7 kWh"
+      ]
     }
   ],
-  "issues": []
+  "issues": [
+    "WARNING: ESS-side DCA 46.1% below threshold 50%"
+  ]
 }
 ```
 
@@ -784,23 +823,23 @@ Note that `valid` is still `true` — the install was successfully validated; it
 ```json
 {
   "valid": false,
-  "system_type": null,
   "pass_dca_pv": null,
   "pass_dca_ess": null,
   "pv_side_total_dca": null,
   "ess_side_total_dca": null,
-  "unified_total_dca": null,
   "dca_pv_threshold": null,
   "dca_ess_threshold": null,
+  "unified_total_dca": null,
   "pass_feoc_pv": null,
   "pass_feoc_ess": null,
   "pv_side_total_feoc": null,
   "ess_side_total_feoc": null,
   "feoc_pv_threshold": null,
   "feoc_ess_threshold": null,
+  "system_type": null,
   "components": [],
   "issues": [
-    "FAIL: Multiple Module SKUs not allowed (Q.PEAK DUO BLK ML-G10+ 420, DCA.17 Q.PEAK DUO BLK ML-G10+ 420)"
+    "FAIL: Multiple Module SKUs not allowed (DCA.17 Q.PEAK DUO BLK ML-G10+ 420, Q.PEAK DUO BLK ML-G10+)"
   ]
 }
 ```
@@ -887,7 +926,7 @@ PV-side FEOC:
 ```
 pv_side_total_feoc = module_feoc + inverter_feoc
 ```
-(No racking; FEOC excludes racking by IRS spec.)
+(No racking; FEOC excludes racking by current EnFin internal logic.)
 
 ESS-side FEOC: capacity-weighted average, identical structure to ESS DCA.
 
@@ -986,7 +1025,7 @@ Installations with two different inverter SKUs (mixed-capacity systems, e.g., 11
 
 ### 11.2 Cold starts on Render
 
-The API runs on Render. Free tier has cold starts (~30 seconds on first request after idle). The current Starter tier ($7/mo) does not have cold starts. If you experience timeouts on first request, contact the SQT team.
+The API runs on Render. Free tier has cold starts (~30 seconds on first request after idle). The Starter tier ($7/mo) does not have cold starts and the current instance will likely be upgraded to this in the future. If you experience timeouts on first request, contact the SQT team.
 
 ### 11.3 Airtable rate limits
 
