@@ -23,7 +23,7 @@ May 2026
 
 ## 1. Overview
 
-The Solar Compatibility API is an internal service that validates a solar installation's bill of materials (BOM) against three sets of rules:
+The Solar Compatibility API is an internal service that validates a solar installation's bill of materials (BOM) against four sets of rules:
 
 - **Structural compatibility** — modules, inverters, batteries, and accessories must form a valid system
 - **UL 2703 mechanical certification** — racking SKUs must share a UL 2703 cross-listed System Family with a single anchor maker
@@ -52,7 +52,7 @@ Standalone endpoints (`/v1/check/dca`, `/v1/check/feoc`, `/v1/check/ul2703`, `/v
 
 - **Tax period**: derived from the installation date. Determines which DCA/FEOC thresholds apply and which formula is used.
 - **System type**: "MLPE" (microinverter or module-level power electronics) or "String" (string inverter). Resolved from the inverter's IAVL record.
-- **Variant SKU**: the API automatically swaps base SKUs to DCA-eligible variant SKUs (e.g., `Q.PEAK DUO BLK ML-G10+ 410` → `DCA.17 Q.PEAK DUO BLK ML-G10+ 410`) based on material codes and serial numbers provided.
+- **Identifier-based resolution**: some SKUs have their DCA eligibility determined by the serial numbers or material codes submitted with the item. In the v2 pipeline the submitted SKU is **always kept as-is** — it is never swapped to a different "variant" SKU. The supplied serial numbers / material codes are *validated* against that SKU's rule (or, for the membership SKU, checked against the eligible-serial list); identifiers that don't fit produce a FAIL. The Q.MI module/inverter pairing is likewise **not** auto-swapped — the caller submits the correct SKU and a mismatch is rejected during the compatibility stage (see section 9.7).
 
 ---
 
@@ -120,11 +120,11 @@ This is the primary endpoint. A single request submits the entire BOM; a single 
 The endpoint runs the following pipeline. If any step produces a `FAIL`-prefixed issue, the pipeline short-circuits and returns `valid: false`.
 
 1. **Preflight validation** — required SKUs are present, no multi-SKU constraints are violated, identifiers are not duplicated between per-item and pooled
-2. **SKU variant resolution** — base SKUs are swapped to DCA-eligible or DCA-ineligible variant SKUs based on material codes and serial numbers
+2. **SKU identifier resolution** — for SKUs that require it, the supplied serial numbers or material codes are processed. The submitted SKU is **kept unchanged in every case** — the v2 pipeline does not swap any SKU to a variant. `SKUS_REQUIRING_RESOLUTION` / `SKUS_REQUIRING_MEMBERSHIP` modules and inverters, `DCA.17 …` material-code SKUs, and pooled-serial batteries are all validated in place: identifiers that don't fit the rule (or aren't in the membership list) produce a FAIL
 3. **AVL fetch** — Airtable records are fetched for every SKU
 4. **Validation** — each SKU's record is verified to exist in the right table and have the right subcategory
 5. **Battery role inference** — batteries are assigned roles (BatteryA, BatteryB, BatteryExpansion) from their BAVL records
-6. **Q.MI module-inverter pairing** — if the inverter is `Q.MI.349B-G1` and the module is in the Q.TRON BLK M-G2+/AC family, the inverter SKU is auto-swapped to the paired variant
+6. **Module/inverter pairing enforcement** — the Q.MI module/inverter pairing is enforced during the compatibility stage (step 7), not auto-swapped. Submitting the wrong Q.MI variant for the module is a compatibility FAIL (see sections 7.5 and 9.7)
 7. **Compatibility** — module/inverter/battery structural rules are enforced
 8. **UL 2703** — racking SKUs are checked for cross-listed compatibility
 9. **DCA** — domestic content percentages are computed per side
@@ -188,7 +188,7 @@ The `bom` object holds three required arrays — `pv`, `inverter`, `battery` —
 
 | Field | Required | Type | Default | Notes |
 |---|---|---|---|---|
-| `sku` | **Required** | string | — | Base SKU. The API resolves to variants automatically. |
+| `sku` | **Required** | string | — | The SKU to validate. For identifier-resolved SKUs, supply the matching serial numbers / material codes (see section 9.6). |
 | `serial_numbers` | Optional | array of strings | `[]` | Per-item alternative to pooled. |
 | `material_codes` | Optional | array of strings | `[]` | PV only. Ignored for inverter/battery. |
 | `quantity` | **Required on all battery items; required on PV items when batteries are present** | integer | `null` | Battery count for battery items (used in capacity-weighted DCA/FEOC averages). Module count for PV items (used for the 2024 IRS unified formula). |
@@ -219,7 +219,7 @@ This means a request that sends an empty string for a SKU (e.g., from a database
 
 - **Optional.** Defaults to empty.
 - **Maximum 3 items.** More than 3 → `FAIL: At most 3 batteries allowed, got <N>`.
-- **`quantity` required on every battery item.** Missing → `FAIL: Battery SKU '<sku>' requires a quantity`. Quantity is used in capacity-weighted DCA and FEOC averages.
+- **`quantity` required on every battery item.** Missing → `FAIL: Battery SKU '<sku>' requires a quantity (used for capacity-weighted DCA/FEOC averages)`. Quantity is used in capacity-weighted DCA and FEOC averages.
 - **Different SKUs allowed.** Battery roles (BatteryA, BatteryB, BatteryExpansion) are inferred from BAVL records.
 
 #### Identifier rules (serial_numbers, material_codes)
@@ -229,7 +229,7 @@ Identifiers can be specified per-item OR pooled at the category level, but not b
 - **Per-item**: each BomItem has its own `serial_numbers` / `material_codes` arrays.
 - **Pooled**: the `bom` object has `pv_serial_numbers` / `pv_material_codes` / `inverter_serial_numbers` / `battery_serial_numbers`. These apply to all items in that category.
 
-For multi-item PV BOMs (multiple BomItems with the same SKU but split across shipments), all per-item identifiers are flattened together before resolution. So if item 1 has SNs `["A", "B"]` and item 2 has `["C"]`, the resolver sees `["A", "B", "C"]`.
+For multi-item PV BOMs (multiple BomItems with the same SKU but split across shipments), all per-item identifiers are flattened together before the identifier check runs. So if item 1 has SNs `["A", "B"]` and item 2 has `["C"]`, the check sees `["A", "B", "C"]`.
 
 ### 4.2 Other Equipment
 
@@ -267,7 +267,7 @@ The `other equipment` object holds racking and accessory SKUs. Required buckets 
 
 #### Blank string handling
 
-Blank strings in racking arrays (Rail, Mid Clamp, etc.) are silently filtered. So `Rail: ["", "XR-10-168M-US", "  "]` becomes `Rail: ["XR-10-168M-US"]`.
+Blank strings in racking arrays (Rail, Mid Clamp, etc.) are silently filtered. So `Rail: ["", "XR-10-168M-US", "  "]` becomes `Rail: ["XR-10-168M-US"]`. If the field is required (even if it is conditionally required) in the case for which it was provided and only a blank string is provided, the API will return a fail message.
 
 Blank strings as values for single-string fields (`MLPE/Optimizer`, `Gateway`) are treated as if the field is not provided.
 
@@ -364,7 +364,7 @@ The `issues` array contains all messages emitted during processing. Each message
 
 - **`FAIL:`** — critical, request was not processable. Response will have `valid: false` and most math fields `null`.
 - **`WARNING:`** — non-fatal data issue, math continues. Includes threshold misses (e.g., DCA below 50% for 2026).
-- **`NOTE:`** — informational, often explaining decisions made (e.g., Q.MI variant swap).
+- **`NOTE:`** — informational, often explaining decisions made (e.g., the 2024 unified DCA check, or a stainless-steel fastener inheriting a paired DCA%).
 
 A request can produce zero, one, or many issues. Frontend code should iterate the array and display by prefix or filter as needed.
 
@@ -462,47 +462,32 @@ Identifier shape:
 - `FAIL: Cannot specify both per-item and pooled serial_numbers for <category>. Use one or the other.`
 - `FAIL: Cannot specify both per-item and pooled material_codes for <category>. Use one or the other.`
 
+Serial-number / material-code resolution (fired during preflight when a SKU requires identifier-based resolution — see section 9.6):
+
+- `FAIL: <sku> requires Serial Numbers for validation` — the SKU is in `SKUS_REQUIRING_RESOLUTION` or `SKUS_REQUIRING_MEMBERSHIP` but no serial numbers were supplied
+- `FAIL: <sku> requires Material Codes for validation` — a `DCA.17 …` SKU was supplied with no material codes
+- `FAIL: The following serial numbers did not fit the rule: [<sn>, ...]` — supplied serials failed the SKU's range/prefix rule, or (for membership SKUs) were not found in the eligible-serial list
+- `FAIL: The following material codes did not fit the rule: [<mc>, ...]` — supplied material codes did not match the SKU's required suffix
+- `FAIL: Some pooled Serial numbers were not associated with one of the provided batteries. [<sn>, ...] is a list of the unmatched Serial Numbers.` — pooled `battery_serial_numbers` contained serials that matched none of the batteries in the BOM
+
 Battery role inference:
 
-- `FAIL: Expansion battery requires a non-expansion base unit`
+- `FAIL: Expansion battery requires a non-expansion base unit` (single-battery case)
+- `FAIL: Expansion batteries require a non-expansion base unit` (two-battery case, both expansion)
 - `FAIL: At least one non-expansion battery required`
 - `FAIL: Three non-expansion batteries is not a supported configuration`
 - `FAIL: <N> batteries is not supported`
-- `FAIL: BatteryA is required when BatteryB or BatteryExpansion is provided`
 
-### 7.2 SKU resolver issues
+### 7.2 Q.MI module-inverter pairing
 
-The resolver swaps base SKUs to DCA-eligible variant SKUs based on identifiers. Behavior is permissive for modules (Q.PEAK family) and strict for batteries/IQ8 inverters.
+The Q.MI pairing is enforced during the compatibility stage (it is **not** auto-swapped). The caller must submit the correct Q.MI SKU; a mismatch produces one of:
 
-**Module resolver (Q.PEAK material code / SN range) — permissive:**
+- `FAIL: Q.TRON BLK M-G2+/AC modules can only be used with SKU: Q.MI.349B-G1 (for Q.TRON BLK M-G2+/AC).`
+- `FAIL: All other AC modules can only be used with SKU: Q.MI.349B-G1.`
 
-- `WARNING: <help_text>. No material code provided; defaulting to non-DCA variant.`
-- `WARNING: <help_text>. Inconsistent material codes for '<sku>'; defaulting to non-DCA variant.`
-- `WARNING: <help_text>. No serial number provided; defaulting to non-DCA variant.`
-- `WARNING: <help_text>. Inconsistent serial numbers for '<sku>'; defaulting to non-DCA variant.`
+See section 9.7 for the full pairing rules.
 
-**Non-module resolver (batteries, IQ8 inverters) — strict:**
-
-- `FAIL: <help_text>. Serial number required to determine variant — none provided.`
-- `FAIL: <help_text>. Serial number '<sn>' does not match any known pattern for '<sku>'. No equivalent product exists in AVL for this serial number.`
-- `FAIL: <help_text>. Inconsistent serial numbers for '<sku>'. Provided SNs resolve to different variants: <list>.`
-
-The strictness difference is by design: Q.PEAK SKUs have a "non-DCA fallback" record in PVAVL, so missing identifiers can fall back gracefully. IQ8 inverters and IQBATTERY-5P-1P-NA-DOM have no such fallback — every variant is keyed on a specific SN range — so missing/unmatched SNs result in a hard FAIL.
-
-**Identifier irrelevance warnings:**
-
-- `WARNING: Ignoring serial numbers for '<sku>' — this SKU uses material code for DCA/FEOC determination`
-- `WARNING: Ignoring material code for '<sku>' — this SKU uses serial number for DCA/FEOC determination`
-- `WARNING: Ignoring serial numbers for '<sku>' — no DCA/FEOC rule applies to this SKU`
-- `WARNING: Ignoring material code for '<sku>' — no DCA/FEOC rule applies to this SKU`
-
-### 7.3 Q.MI module-inverter pairing
-
-- `NOTE: Inverter '<bare>' resolved to '<variant>' because module is '<trimmed_name>'`
-- `FAIL: '<target>' not found in IAVL after Q.MI variant resolution`
-- `FAIL: Inverter '<variant>' is specifically for Q.TRON BLK M-G2+/AC modules. Submitted module is '<trimmed_name>'. Use '<bare>' for this module.`
-
-### 7.4 Validation issues
+### 7.3 Validation issues
 
 - `FAIL: Unknown product type(s): <types>`
 - `FAIL: <key> SKU '<sku>' not found in MSAVL`
@@ -510,13 +495,19 @@ The strictness difference is by design: Q.PEAK SKUs have a "non-DCA fallback" re
 - `FAIL: <key> SKU '<sku>' is not valid for this product type. Expected: <expected>. Found: <found>`
 - `WARNING: <key> SKU '<sku>' has multiple subcategories filled (<list>) — data issue in MSAVL`
 
-### 7.5 Compatibility FAILs
+### 7.4 Compatibility FAILs
 
 Module ↔ Inverter:
 
-- `FAIL: AC modules are only compatible with Q.MI-series inverters (inverter series is '<inv_series>')`
-- `FAIL: DC modules are not compatible with Q.MI-series inverters`
+- `FAIL: Q.TRON BLK M-G2+/AC modules can only be used with SKU: Q.MI.349B-G1 (for Q.TRON BLK M-G2+/AC).`
+- `FAIL: All other AC modules can only be used with SKU: Q.MI.349B-G1.`
+- `FAIL: DC modules are not compatible with Q.MI-series inverters.`
 - `WARNING: Module has unrecognised module_type '<type>' — cannot check module/inverter compatibility`
+
+Inverter ↔ Additional Inverter:
+
+- `FAIL: Additional Inverter must be same OEM as primary Inverter`
+- `FAIL: Additional Inverter must be same series as primary Inverter`
 
 Inverter ↔ MLPE/Optimizer:
 
@@ -539,13 +530,13 @@ Batteries:
 - `FAIL: BatteryExpansion must be same OEM as BatteryA`
 - `FAIL: BatteryExpansion requires a BatteryA to be present`
 
-### 7.6 UL 2703
+### 7.5 UL 2703
 
 - `FAIL: No equipment provided`
 - `FAIL: <candidate> items have no shared System Family (<skus>)`
 - `FAIL: <candidate> cannot be anchor — missing from Crosslisting of: <missing>`
 
-### 7.7 DCA messages
+### 7.6 DCA messages
 
 System type resolution:
 
@@ -630,13 +621,13 @@ A minimum viable requirement for an MLPE system will require an MLPE Mount in ra
     ],
     "inverter": [
       {
-        "sku": "IQ8HC-72-M-DOM-US",
+        "sku": "IQ8HC-72-M-DOM-US (SN begins with 53xxxx where xxxx >= 2501 OR 54xxxx where xxxx >= 2546)",
         "serial_numbers": ["542600100001"]
       }
     ],
     "battery": [
       {
-        "sku": "IQBATTERY-5P-1P-NA-DOM",
+        "sku": "IQBATTERY-5P-1P-NA-DOM (SN begins with 54xxxx where xxxx >= 2546)",
         "serial_numbers": ["542600200001"],
         "quantity": 1
       }
@@ -680,7 +671,6 @@ A minimum viable requirement for an MLPE system will require an MLPE Mount in ra
     "Mid Clamp": ["242-02071-USA"],
     "End Clamp": ["242-02073-USA"],
     "Splice": ["242-01213-USA"],
-    "MLPE Mount": ["242-10034-USA"],
     "Roof Flashing/Mount/Clamp": ["242-02729"]
   }
 }
@@ -708,7 +698,39 @@ If serial numbers apply to all PV items rather than being per-item, use pooled f
 
 The pooled identifiers apply to ALL items in that category. Mix per-item and pooled in the same category → `FAIL`.
 
-### 8.5 Sample response (2026, fully passing)
+### 8.5 Membership-list module SKU (eligible-serial check)
+
+For a module whose DCA eligibility is determined by a serial-number membership list, submit the SKU **exactly** in the `<model> <3-digit-wattage> (with DCA eligible SN)` form and supply the serial numbers (per-item or pooled). Every serial must be in the eligible-serial list or the request FAILs.
+
+```json
+{
+  "installation-date": "2026-06-15",
+  "bom": {
+    "pv": [
+      {
+        "sku": "Q.TRON BLK M-G2+ 430 (with DCA eligible SN)",
+        "serial_numbers": ["205224472502701180", "204824452502704128"],
+        "quantity": 10
+      }
+    ],
+    "inverter": [{"sku": "Q.VOLT H3.8SX"}]
+  },
+  "other equipment": {
+    "Rail": ["XR-10-168M-US"],
+    "Mid Clamp": ["XR-MID-01-B1-US"],
+    "End Clamp": ["UFO-END-01-B1-US"],
+    "Roof Flashing/Mount/Clamp": ["QMTR-BM-A-12"]
+  }
+}
+```
+
+Common failure modes for this SKU:
+
+- SKU not in the exact `<model> <3-digit-wattage> (with DCA eligible SN)` shape → membership check is skipped and the module is treated as non-DCA (no FAIL is raised; the percentage is simply the non-eligible value). Verify the SKU string before assuming the serials were checked.
+- SKU correct but no serials supplied → `FAIL: Q.TRON BLK M-G2+ 430 (with DCA eligible SN) requires Serial Numbers for validation`
+- One or more serials not in the eligible list → `FAIL: The following serial numbers did not fit the rule: [<sn>, ...]`
+
+### 8.6 Sample response (2026, fully passing)
 
 ```json
 {
@@ -789,7 +811,7 @@ The pooled identifiers apply to ALL items in that category. Mix per-item and poo
 }
 ```
 
-### 8.6 Sample response (2026, threshold miss)
+### 8.7 Sample response (2026, threshold miss)
 
 ```json
 {
@@ -818,7 +840,7 @@ The pooled identifiers apply to ALL items in that category. Mix per-item and poo
 
 Note that `valid` is still `true` — the install was successfully validated; it just doesn't meet the DCA/FEOC thresholds. The pass flags reflect the threshold check.
 
-### 8.7 Sample response (preflight FAIL)
+### 8.8 Sample response (preflight FAIL)
 
 ```json
 {
@@ -930,22 +952,60 @@ pv_side_total_feoc = module_feoc + inverter_feoc
 
 ESS-side FEOC: capacity-weighted average, identical structure to ESS DCA.
 
-### 9.6 SKU variant resolution
+### 9.6 SKU identifier resolution
 
-The API resolves base SKUs to DCA-eligible variants based on identifiers provided. Customers send the base SKU (e.g., `Q.PEAK DUO BLK ML-G10+ 410`). The API returns whichever variant the identifiers indicate.
+For SKUs whose DCA eligibility depends on the serial numbers or material codes supplied with the item, the v2 combined pipeline **validates the identifiers against the submitted SKU and keeps that SKU unchanged**. It does not swap the SKU to a DCA-eligible or non-DCA-eligible "variant" — there is no fallback substitution in the v2 path. An identifier that doesn't fit is a FAIL, not a silent downgrade.
 
-| Family | Identifier checked | Resolution behavior |
+The v2 pipeline processes exactly three groups (everything else is passed through with its identifiers unused — see "SKUs that require resolution" below):
+
+1. **Range-rule validation** (`SKUS_REQUIRING_RESOLUTION`) — each serial number is checked against the SKU's prefix/digit-range rule via `check_serial_number_rule`. Used by the IQBATTERY and IQ8 families.
+2. **Material-code validation** (`DCA.17 …` SKUs) — the material codes are checked against the SKU's required suffix via `check_material_code`.
+3. **Membership-list validation** (`SKUS_REQUIRING_MEMBERSHIP`) — every supplied serial number must appear in the explicit eligible-serial list for that product (`check_serial_number_membership`).
+
+| Family | Identifier checked | v2 behavior |
 |---|---|---|
-| Q.PEAK modules | Material code | Permissive — missing/wrong code → base SKU (non-DCA fallback) + WARNING |
-| Q.PEAK modules | Serial number range | Permissive — same as above |
-| IQBATTERY-5P-1P-NA | Serial number prefix (54 vs not) | Permissive — fallback record exists for both |
-| IQBATTERY-5P-1P-NA-DOM | Serial number tier (3 ranges) | **Strict** — SN doesn't match any tier (not 54...) → FAIL |
-| IQBATTERY-10C-1P-NA-DOM | Serial number range | Strict — both eligible/ineligible records exist; missing or unmatched SN → FAIL |
-| IQ8HC-72-M-DOM-US | Multi-prefix SN range | Strict |
-| IQ8MC-72-M-US | Multi-prefix SN range | Strict |
-| IQ8PLUS-72-M-US | Multi-prefix SN range | Strict |
+| IQBATTERY-5P-1P-NA-DOM | Serial number tier | **Strict** — serial not matching the SKU's rule → FAIL |
+| IQBATTERY-10C-1P-NA-DOM | Serial number range | **Strict** — missing or unmatched serial → FAIL |
+| IQBATTERY-5P-1P-NA | Serial number prefix | **Strict** — serial not matching the SKU's rule → FAIL |
+| IQ8HC-72-M-DOM-US | Multi-prefix SN range | **Strict** |
+| IQ8MC-72-M-US | Multi-prefix SN range | **Strict** |
+| IQ8PLUS-72-M-US | Multi-prefix SN range | **Strict** |
+| `DCA.17 …` modules | Material code suffix | **Strict** — code not matching the SKU's suffix → FAIL |
+| Q.TRON BLK M-G2+ (membership) | Serial number membership list | **Strict** — any serial not in the eligible list → FAIL |
 
-For strict resolution, missing or unmatched SNs result in `FAIL` because no fallback variant exists in the AVL. The customer must provide a valid SN matching one of the defined ranges.
+In the v2 pipeline, missing or unmatched identifiers always result in `FAIL` — the submitted SKU is retained and the failure is reported; there is no "non-DCA fallback variant." (The older permissive Q.PEAK material-code / SN-range behavior, where a missing identifier fell back to a non-DCA base SKU with a WARNING, belongs to legacy `resolve_variant` only — see the scope note in section 7.2. It does not apply to `/v1/check/combined`.)
+
+#### SKUs that require resolution
+
+A SKU triggers serial/material resolution only if it appears (after canonicalization) in one of these sets. SKUs **not** in either set are passed through unchanged and any serials/material codes supplied with them are not used for resolution.
+
+**`SKUS_REQUIRING_MEMBERSHIP`** (serials must be in the eligible-serial list):
+
+- `Q.TRON BLK M-G2+ (with DCA eligible SN)`
+
+**`SKUS_REQUIRING_RESOLUTION`** (serials checked against a range/prefix rule):
+
+- `IQBATTERY-5P-1P-NA-DOM (SN begins with 54xxxx where xxxx >= 2546)`
+- `IQBATTERY-5P-1P-NA-DOM (SN begins with 54xxxx where xxxx < 2529)`
+- `IQBATTERY-10C-1P-NA-DOM (SN begins with 54xxxx where xxxx >= 2546)`
+- `IQBATTERY-10C-1P-NA-DOM (SN begins with 54xxxx where xxxx < 2546)`
+- `IQBATTERY-5P-1P-NA (SN begins with 54)`
+- `IQBATTERY-5P-1P-NA (SN does not begin with 54)`
+- `IQ8HC-72-M-DOM-US (SN begins with 53xxxx where xxxx >= 2501 OR 54xxxx where xxxx >= 2546)`
+- `IQ8HC-72-M-DOM-US (SN begins with 53xxxx where xxxx < 2501 OR 54xxxx where xxxx < 2546)`
+- `IQ8MC-72-M-US (SN begins with 53xxxx OR 54xxxx where xxxx >= 2546)`
+- `IQ8MC-72-M-US (SN begins with 53xxxx OR 54xxxx where xxxx < 2546)`
+- `IQ8PLUS-72-M-US (SN begins with 53xxxx OR 54xxxx where xxxx >= 2546)`
+- `IQ8PLUS-72-M-US (SN begins with 53xxxx OR 54xxxx where xxxx < 2546)`
+- `Q.PEAK DUO BLK ML-G10+/TS (with DCA eligible SN)`
+
+#### Required SKU format for module membership/resolution SKUs
+
+> **Important:** For a module SKU ending in `(with DCA eligible SN)`, serial-number validation only occurs if the SKU is formatted **exactly** as `<model> <wattage> (with DCA eligible SN)` — a single space, a **3-character** wattage, a single space, then the literal suffix. For example:
+>
+> `Q.TRON BLK M-G2+ 430 (with DCA eligible SN)`
+>
+> The wattage portion that precedes the suffix must be exactly 3 characters with the surrounding spaces as shown. A 2- or 4-digit wattage, a missing or extra space, or any deviation in the suffix means the SKU will **not** be recognized as a membership SKU, serial validation will silently be skipped, and the item will be treated as its non-DCA form. This is a strict input contract — submit the SKU verbatim in this shape.
 
 ### 9.7 Q.MI module-inverter pairing (special case)
 
@@ -953,9 +1013,12 @@ The `Q.MI.349B-G1` inverter has two AVL records:
 - `Q.MI.349B-G1` — used with all AC modules EXCEPT Q.TRON BLK M-G2+/AC
 - `Q.MI.349B-G1 (for Q.TRON BLK M-G2+/AC)` — used ONLY with Q.TRON BLK M-G2+/AC modules
 
-Customers always submit the bare SKU (`Q.MI.349B-G1`). The API auto-swaps to the Q.TRON variant if the module's Trimmed Name field in PVAVL is `Q.TRON BLK M-G2+/AC`. A `NOTE` is added to issues explaining the swap.
+The API does **not** auto-swap between these. The caller must submit the correct SKU for the module being installed. The pairing is enforced during the compatibility stage:
 
-If a customer submits the variant SKU directly with a non-matching module, the API FAILs.
+- A Q.TRON BLK M-G2+/AC module submitted with any inverter SKU other than `Q.MI.349B-G1 (for Q.TRON BLK M-G2+/AC)` → `FAIL: Q.TRON BLK M-G2+/AC modules can only be used with SKU: Q.MI.349B-G1 (for Q.TRON BLK M-G2+/AC).`
+- Any other AC module submitted with an inverter SKU other than `Q.MI.349B-G1` → `FAIL: All other AC modules can only be used with SKU: Q.MI.349B-G1.`
+
+(This behavior changed from a previous auto-swap design; there is no longer a `NOTE` about a resolved/swapped inverter SKU.)
 
 ### 9.8 Unirac SolarMount stainless mid-clamp inheritance
 
@@ -974,6 +1037,8 @@ Unirac SolarMount stainless steel mid-clamps are intentionally DCA-eligible with
 A `NOTE` is added to the response issues explaining the inheritance:
 
 > NOTE: Stainless Unirac SolarMount mid-clamp '<sku>' inherits DCA% 11.1% from paired End Clamp
+
+**Generic stainless-steel fastener inheritance:** beyond the Unirac-specific case above, a fastener whose MSAVL notes contain `Stainless-steel` and which has no DCA% of its own is also treated as DCA-eligible by inheriting the resolved fastener percentage. If all real (non-inherited) fastener percentages agree on a single non-zero value, the stainless fastener inherits that value; if any fastener is zero, it resolves to 0. This resolution is silent — no distinct issue message is emitted for the generic case.
 
 ---
 
