@@ -4,7 +4,7 @@ Verified passing cases as of 2026-06-02T17:04:32. Each case shows the JSON reque
 
 **Base URL:** `https://solar-compatibility-api.onrender.com/`
 
-**Total passing cases:** 80
+**Total passing cases:** 81
 
 ---
 
