@@ -4,7 +4,7 @@ Verified passing cases as of 2026-06-02T17:04:32. Each case shows the JSON reque
 
 **Base URL:** `https://solar-compatibility-api.onrender.com/`
 
-**Total passing cases:** 80
+**Total passing cases:** 81
 
 ---
 
@@ -9614,6 +9614,153 @@ _S-5! + Ironridge_
   ]
 }
 ```
+## 2027_pass_case_AC_tesla
+
+_S-5! + Ironridge_
+
+**Request:**
+
+```json
+{
+  "installation-date": "2027-06-15T00:00:00",
+  "bom": {
+    "pv": [
+      {
+        "sku": "Q.TRON BLK M-G2.D1+/AC 430",
+        "serial_numbers": [],
+        "material_codes": [],
+        "quantity": 10
+      }
+    ],
+    "inverter": [
+      {
+        "sku": "Q.MI.349B-G1",
+        "serial_numbers": []
+      }
+    ],
+    "battery": [
+      {
+        "sku": "1707000-21-y",
+        "serial_numbers": [],
+        "quantity": 1
+      }
+    ]
+  },
+  "other equipment": {
+    "End Clamp": [
+      "UFO-END-01-B1-US"
+    ],
+    "Mid Clamp": [
+      "XR-MID-01-B1-US"
+    ],
+    "Accessories": [
+      "XR-10-CAP01-B1"
+    ],
+    "L-foot / Standoff / Tilt-leg": [
+      "LFT-03-M1",
+      "XR-LUG-04-A1"
+    ],
+    "Rail": [
+      "XR-10-168M-US"
+    ],
+    "Splice": [
+      "XR10-BOSS-01-M1-US"
+    ],
+    "Roof Flashing/Mount/Clamp": [
+      "QMTR-BM-A-12",
+      "QMTR-S3.25-A-12"
+    ],
+    "MLPE Mount": [
+      "BHW-MI-01-A1-US"
+    ]
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "valid": true,
+  "pass_dca_pv": true,
+  "pass_dca_ess": true,
+  "pv_side_total_dca": 0.563,
+  "ess_side_total_dca": 0.595,
+  "dca_pv_threshold": 0.55,
+  "dca_ess_threshold": 0.55,
+  "unified_total_dca": null,
+  "pass_feoc_pv": true,
+  "pass_feoc_ess": true,
+  "pv_side_total_feoc": 0.636,
+  "ess_side_total_feoc": 0.677,
+  "feoc_pv_threshold": 0.45,
+  "feoc_ess_threshold": 0.6,
+  "system_type": "MLPE",
+  "components": [
+    {
+      "key": "Module",
+      "sku": "Q.TRON BLK M-G2.D1+/AC 430",
+      "skus": null,
+      "dca_pct": 0.119,
+      "feoc_pct": 0.431,
+      "notes": []
+    },
+    {
+      "key": "Inverter",
+      "sku": "Q.MI.349B-G1",
+      "skus": null,
+      "dca_pct": 0.248,
+      "feoc_pct": 0.205,
+      "notes": []
+    },
+    {
+      "key": "Racking",
+      "sku": null,
+      "skus": [
+        "XR-10-168M-US",
+        "XR-MID-01-B1-US",
+        "UFO-END-01-B1-US",
+        "XR10-BOSS-01-M1-US",
+        "QMTR-BM-A-12",
+        "QMTR-S3.25-A-12",
+        "LFT-03-M1",
+        "XR-LUG-04-A1",
+        "BHW-MI-01-A1-US",
+        "XR-10-CAP01-B1"
+      ],
+      "dca_pct": 0.196,
+      "feoc_pct": null,
+      "notes": [
+        "Rail (XR-10-168M-US): 15.00%",
+        "Mid Clamp (XR-MID-01-B1-US): 3.50%",
+        "End Clamp (UFO-END-01-B1-US): 3.50%",
+        "Splice (XR10-BOSS-01-M1-US): 3.50%",
+        "Roof Flashing/Mount/Clamp (QMTR-BM-A-12): no DCA %",
+        "Roof Flashing/Mount/Clamp (QMTR-S3.25-A-12): no DCA %",
+        "L-foot / Standoff / Tilt-leg (LFT-03-M1): no DCA %",
+        "L-foot / Standoff / Tilt-leg (XR-LUG-04-A1): 0.00%",
+        "MLPE Mount (BHW-MI-01-A1-US): 3.50%",
+        "Accessories (XR-10-CAP01-B1): 0.00%"
+      ]
+    },
+    {
+      "key": "ESS",
+      "sku": null,
+      "skus": [
+        "1707000-21-y"
+      ],
+      "dca_pct": 0.595,
+      "feoc_pct": 0.677,
+      "notes": [
+        "BatteryA (1707000-21-y): qty=1, capacity=13.5 kWh"
+      ]
+    }
+  ],
+  "issues": []
+}
+```
 
 ---
+
+
 
