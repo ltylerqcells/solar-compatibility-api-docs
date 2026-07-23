@@ -251,12 +251,12 @@ The `other equipment` object holds racking and accessory SKUs. Required buckets 
 | Field | Required | Type | Notes |
 |---|---|---|---|
 | `Rail` | **Required** | array | At least one rail SKU. Maximum 2 distinct SKUs. |
-| `Mid Clamp` | **Required** | array | Single SKU only. |
-| `End Clamp` | **Required** | array | Single SKU only. |
+| Mid Clamp  | Required **except for railless systems** | array | Single SKU only. |
+| End Clamp  | Required **except for railless systems** | array | Single SKU only. |
 | `Roof Flashing/Mount/Clamp` | **Required** | array | Multiple SKUs allowed. |
 | `L-foot / Standoff / Tilt-leg` | Optional | array | Multiple SKUs allowed. |
 | `Splice` | Optional | array | Single SKU only. |
-| `MLPE Mount` | **Required only for MLPE systems** | array | Single SKU only. |
+| MLPE Mount | Required for MLPE systems **except AC module systems** | array | Single SKU only. |
 | `Accessories` | Optional | array | Multiple SKUs allowed. |
 | `MLPE/Optimizer` | **Required for some MLPE systems** | single string | Single SKU, not an array. |
 | `Gateway` | Optional | single string | Single SKU, not an array. |
@@ -474,7 +474,7 @@ Racking / equipment requirements:
 
 - `FAIL: Multiple <bucket> SKUs not allowed (<sku1>, <sku2>, ...)` — for single-SKU buckets
 - `FAIL: At most <N> distinct Rail SKUs allowed, got <N> (<skus>)`
-- `FAIL: Missing required product type: <key>`
+- `FAIL: Missing required product type: <key>` — End Clamp and Mid Clamp requirement not triggered when Rail SKU is flagged as railless in MSAVL
 
 Identifier shape:
 
@@ -531,7 +531,7 @@ Inverter ↔ Additional Inverter:
 Inverter ↔ MLPE/Optimizer:
 
 - `FAIL: MLPE/Optimizer is required for <inv_oem> MLPE inverters`
-- `FAIL: MLPE Mount is required for MLPE/microinverter systems`
+- `FAIL: MLPE Mount is required for MLPE/microinverter systems`  — not triggered when module_type is AC
 - `FAIL: MLPE/Optimizer must be same OEM as Inverter`
 
 Inverter ↔ Gateway:
@@ -1009,7 +1009,7 @@ Unirac SolarMount stainless steel mid-clamps inherit the End Clamp's DCA% when p
 
 ### 10.4 Common preflight FAILs (200 + valid:false)
 
-- Missing required equipment buckets (Module, Inverter, Rail, Mid Clamp, End Clamp)
+- Missing required equipment buckets (Module, Inverter, Rail, Mid Clamp, End Clamp). Mid Clamp and End Clamp not required for railless systems (using the appropriate wind skirt)
 - Multiple distinct Module SKUs
 - Multiple distinct inverter SKUs (manual review required)
 - Battery present without `quantity` on PV item
@@ -1061,6 +1061,7 @@ Typical response time: 2-5 seconds (Airtable round-trips dominate). Larger BOMs 
 - `quantity` on all battery BomItems
 - `MLPE Mount` in other equipment for MLPE systems
 - `MLPE/Optimizer` for Enphase and SolarEdge MLPE inverters
+- Mid Clamp and End Clamp requirements are conditionally waived when the submitted Rail SKU is flagged as a railless product in MSAVL (field `fldb2zO9jh200YVvw` contains "Rail-less product"). The MLPE Mount requirement is waived for AC module systems regardless of racking type.
 
 ### Critical response fields
 - `valid` — true if processable
