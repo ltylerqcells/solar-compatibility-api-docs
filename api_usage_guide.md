@@ -255,8 +255,8 @@ The `other equipment` object holds racking and accessory SKUs. Required buckets 
 | `End Clamp`  | Required **except for railless systems** | array | Single SKU only. |
 | `Roof Flashing/Mount/Clamp` | **Required** | array | Multiple SKUs allowed. |
 | `L-foot / Standoff / Tilt-leg` | Optional | array | Multiple SKUs allowed. |
-| `Splice` | Optional | array | Single SKU only. |
-| `MLPE Mount` | Required for MLPE systems **except AC module systems** | array | Single SKU only. |
+| `Splice` | Optional | array | Multiple SKUs allowed. |
+| `MLPE Mount` | Required for MLPE systems **except AC module systems** | array | Multiple SKUs allowed. |
 | `Accessories` | Optional | array | Multiple SKUs allowed. |
 | `MLPE/Optimizer` | **Required for some MLPE systems** | single string | Single SKU, not an array. |
 | `Gateway` | Optional | single string | Single SKU, not an array. |
