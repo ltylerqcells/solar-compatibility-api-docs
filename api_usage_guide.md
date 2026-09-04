@@ -213,7 +213,7 @@ Blank strings as SKU values are rejected with explicit FAIL messages:
 #### `inverter` array constraints
 
 - **Must have at least one item.** Empty array → `FAIL: Inverter SKU is required`.
-- **All items must share one SKU.** Multiple distinct inverter SKUs → `FAIL: Multiple inverter SKUs require manual review`.
+- **All items must share OEM.** Multiple inverter SKUs with differing DCA percentages will not be able to be calculated.
 
 #### `battery` array constraints
 
